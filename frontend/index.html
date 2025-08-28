@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatbot</title>
+    <!-- Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for a clean chat UI */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+
+        /* Custom scrollbar for chat container */
+        .chat-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .chat-container::-webkit-scrollbar-track {
+            background: #e5e7eb;
+            border-radius: 10px;
+        }
+
+        .chat-container::-webkit-scrollbar-thumb {
+            background: #9ca3af;
+            border-radius: 10px;
+        }
+
+        .chat-container::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <!-- Main chat container -->
+    <div class="flex flex-col w-full max-w-2xl bg-white rounded-xl shadow-2xl overflow-hidden">
+
+        <!-- Chat header -->
+        <div class="bg-gray-800 text-white p-4 flex justify-between items-center rounded-t-xl">
+            <h1 class="text-2xl font-bold">FAQ Chatbot</h1>
+            <span class="text-sm text-gray-400">powered by FastAPI and LLM</span>
+        </div>
+
+        <!-- Chat messages area -->
+        <div id="chat-messages" class="flex-grow p-4 space-y-4 overflow-y-auto chat-container h-[70vh]">
+            <!-- Messages will be injected here by JavaScript -->
+        </div>
+
+        <!-- Chat input area -->
+        <div class="bg-gray-100 p-4 flex items-center rounded-b-xl">
+            <input type="text" id="user-input" placeholder="Ask a question..."
+                class="flex-grow p-3 rounded-full border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200 shadow-sm text-gray-800">
+            <button id="send-btn"
+                class="ml-3 p-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition duration-200 transform hover:scale-105 active:scale-95">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- DOM Elements ---
+            const chatMessages = document.getElementById('chat-messages');
+            const userInput = document.getElementById('user-input');
+            const sendBtn = document.getElementById('send-btn');
+
+            // --- Configuration ---
+            // IMPORTANT: Change this URL to your deployed FastAPI backend URL on Render.
+            const BACKEND_URL = "http://localhost:8000";
+            const API_ENDPOINT = "/api/query";
+
+            // --- Helper Functions ---
+
+            /**
+             * Appends a message to the chat display.
+             * @param {string} role - The role of the message ('user' or 'assistant').
+             * @param {string} content - The text content of the message.
+             * @param {string} [source] - The source of the information (optional).
+             */
+            function addMessage(role, content, source = null) {
+                const messageDiv = document.createElement('div');
+                messageDiv.classList.add('flex', 'flex-col', 'space-y-1');
+
+                if (role === 'user') {
+                    messageDiv.classList.add('items-end');
+                    messageDiv.innerHTML = `
+                        <div class="bg-blue-600 text-white p-3 rounded-t-lg rounded-bl-lg max-w-xs md:max-w-md shadow-md">
+                            ${content}
+                        </div>
+                    `;
+                } else {
+                    messageDiv.classList.add('items-start');
+                    let sourceHtml = '';
+                    if (source && source !== 'Unknown') {
+                        sourceHtml = `<p class="text-xs text-gray-500 mt-1">Source: ${source}</p>`;
+                    }
+                    messageDiv.innerHTML = `
+                        <div class="bg-gray-200 text-gray-800 p-3 rounded-t-lg rounded-br-lg max-w-xs md:max-w-md shadow-md">
+                            ${content}
+                        </div>
+                        ${sourceHtml}
+                    `;
+                }
+                chatMessages.appendChild(messageDiv);
+                // Scroll to the latest message
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+
+            /**
+             * Displays a simple loading spinner message.
+             * @returns {HTMLElement} The loading message element.
+             */
+            function showThinkingIndicator() {
+                const thinkingMessage = document.createElement('div');
+                thinkingMessage.id = 'thinking-indicator';
+                thinkingMessage.classList.add('bg-gray-200', 'text-gray-600', 'p-3', 'rounded-lg', 'max-w-xs', 'shadow-md', 'flex', 'items-center', 'space-x-2');
+                thinkingMessage.innerHTML = `
+                    <svg class="animate-spin h-4 w-4 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span>Thinking...</span>
+                `;
+                chatMessages.appendChild(thinkingMessage);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                return thinkingMessage;
+            }
+
+            /**
+             * Removes the thinking indicator from the chat.
+             */
+            function removeThinkingIndicator() {
+                const indicator = document.getElementById('thinking-indicator');
+                if (indicator) {
+                    indicator.remove();
+                }
+            }
+            
+            /**
+             * Handles the user's query submission.
+             */
+            async function handleQuery() {
+                const query = userInput.value.trim();
+                if (!query) return;
+
+                addMessage('user', query);
+                userInput.value = '';
+
+                const thinkingIndicator = showThinkingIndicator();
+
+                try {
+                    const response = await fetch(`${BACKEND_URL}${API_ENDPOINT}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ query: query })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    const answer = result.answer || "I'm sorry, an issue occurred and I couldn't provide an answer.";
+                    const source = result.source || "Unknown";
+                    
+                    removeThinkingIndicator();
+                    addMessage('assistant', answer, source);
+
+                } catch (error) {
+                    removeThinkingIndicator();
+                    addMessage('assistant', "I'm sorry, an error occurred while fetching the response. Please try again later.");
+                    console.error('Fetch error:', error);
+                }
+            }
+
+            // --- Event Listeners ---
+            sendBtn.addEventListener('click', handleQuery);
+            userInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    handleQuery();
+                }
+            });
+        });
+    </script>
+
+</body>
+</html>
